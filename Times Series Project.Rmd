@@ -1,0 +1,200 @@
+---
+title: "USA West Coast Gas Price Analysis"
+author: "Jack Chu"
+date: "2023-02-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Original Time Series
+
+```{r}
+library(forecast)
+
+original_data <- read.csv("West_Coast_All_Grades_Conventional_Retail_Gasoline_Prices.csv", skip= 4)
+
+original_data$WestCoast_price <- rev(original_data$West.Coast.All.Grades.Conventional.Retail.Gasoline.Prices.Dollars.per.Gallon)
+
+original_WestCoast.ts <- ts(original_data$WestCoast_price, start = c(2005, 1), end = c(2023, 1), freq = 12)
+
+head(original_WestCoast.ts)
+tail(original_WestCoast.ts)
+
+# Plot
+plot(original_WestCoast.ts,  ylab = "West Coast Gas Price", xlab = "Time", bty = "l", 
+     xlim = c(2005,2023), ylim = c(1, 6),main = "")
+
+# Not a random walk
+Acf(diff(original_WestCoast.ts)) 
+```
+
+Let's partition the data. 
+```{r}
+nValid <- 18
+nTrain <- length(original_WestCoast.ts) - nValid
+or.train.ts <- window(original_WestCoast.ts, start = c(2005,1), end = c(2005,nTrain))
+or.valid.ts <- window(original_WestCoast.ts, start = c(2005,nTrain+1), end = c(2005, nTrain+nValid))
+head(or.train.ts)
+tail(or.valid.ts)
+```
+
+
+First, try seansonal naive
+```{r}
+or.west_snaive_pred <- snaive(or.train.ts, h=nValid, level=0)
+```
+
+
+We can test Auto Arima model
+```{r}
+or.west.auto.arima <- Arima(or.train.ts, order =c(1,1,1), season = c(0,1,1))
+summary(or.west.auto.arima)
+or.west.auto.arima.pred <- forecast(or.west.auto.arima, h=nValid, level=0)
+```
+Try Holt Winter and other ets() related smoothing methods
+```{r}
+# Catching trend and seasonality 
+or.hwin <- ets(or.train.ts, model='AAA')
+hwin.or.pred <-  forecast(or.hwin, h=nValid, level=0)
+
+# Without Seasonality
+or.ets.aan <- ets(or.train.ts, model = 'AAN')
+or.ets.aan.pred <-  forecast(or.ets.aan, h=nValid, level=0)
+
+
+# Test MAM
+best.ets.mam <- ets(or.train.ts, model = 'MAM', alpha = 0.3, beta = 0.0801, gamma = 0.0751)
+best.ets.mam.pred <- forecast(best.ets.mam, h=nValid, level=0)
+
+
+# Test MAA
+or.ets.maa <- ets(or.train.ts, model = 'MAA')
+or.ets.maa.pred <-  forecast(or.ets.maa, h=nValid, level=0)
+
+# Test MAM
+or.ets.mam <- ets(or.train.ts, model = 'MAM')
+or.ets.mam.pred <- forecast(or.ets.mam, h=nValid, level=0)
+```
+
+Try linear models
+```{r}
+# Only catch Season
+or.west.lm.season <- tslm(or.train.ts ~ season)
+or.west.lm.season.pred <- forecast(or.west.lm.season, h= nValid, level = 0)
+or.west.lm.season.pred$mean
+
+# Catch Season + Trend
+or.west.lm.season.trend <- tslm(or.train.ts ~ season + trend)
+or.west.lm.season.trend.pred <- forecast(or.west.lm.season.trend, h= nValid, level = 0)
+or.west.lm.season.trend.pred$mean
+
+# Poly
+or.west.poly.season.trend <- tslm(or.train.ts ~ trend + I(trend^2) + season)
+or.west.poly.season.trend.pred <- forecast(or.west.poly.season.trend, h= nValid, level = 0)
+or.west.poly.season.trend.pred$mean
+```
+
+Try TBATS Model
+```{r}
+or.west.tbats <- tbats(or.train.ts)
+or.west.tbats.pred <- forecast(or.west.tbats, h= nValid, level = 0)
+```
+
+
+Test accuracy for 8 models 
+```{r}
+accuracy(or.west_snaive_pred$mean,or.valid.ts)
+accuracy(or.west.auto.arima.pred$mean,or.valid.ts) # Second Best
+accuracy(hwin.or.pred$mean,or.valid.ts) 
+accuracy(or.ets.aan.pred$mean,or.valid.ts) 
+accuracy(or.ets.mam.pred$mean,or.valid.ts) # Best MAPE
+# accuracy(or.west.lm.season.pred$mean,or.valid.ts)
+accuracy(or.west.lm.season.trend.pred$mean,or.valid.ts)
+accuracy(or.west.poly.season.trend.pred$mean,or.valid.ts) 
+accuracy(or.west.tbats.pred$mean,or.valid.ts) 
+accuracy(or.ets.maa.pred$mean, or.valid.ts) 
+accuracy(best.ets.mam.pred$mean, or.valid.ts)
+```
+
+Create data frame 
+```{r}
+acc_df <- data.frame(
+  Method = c("WEST_snaive", "WEST_ARIMA", "WEST_HW", "WEST_AAN", "WEST_MAM", "WEST_MAA", "WEST_LM_SEASON", "WEST_POLY", "WEST_TBATS"),
+  MAE = c(accuracy(or.west_snaive_pred$mean, or.valid.ts)[3], accuracy(or.west.auto.arima.pred$mean, or.valid.ts)[3], accuracy(hwin.or.pred$mean, or.valid.ts)[3], accuracy(or.ets.aan.pred$mean, or.valid.ts)[3], accuracy(or.ets.mam.pred$mean, or.valid.ts)[3], accuracy(or.ets.maa.pred$mean, or.valid.ts)[3], accuracy(or.west.lm.season.trend.pred$mean, or.valid.ts)[3],  accuracy(or.west.poly.season.trend.pred$mean, or.valid.ts)[3], accuracy(or.west.tbats.pred$mean, or.valid.ts)[3]),
+  RMSE = c(accuracy(or.west_snaive_pred$mean, or.valid.ts)[2], accuracy(or.west.auto.arima.pred$mean, or.valid.ts)[2], accuracy(hwin.or.pred$mean, or.valid.ts)[2], accuracy(or.ets.aan.pred$mean, or.valid.ts)[2], accuracy(or.ets.mam.pred$mean, or.valid.ts)[2], accuracy(or.ets.maa.pred$mean, or.valid.ts)[2], accuracy(or.west.lm.season.trend.pred$mean, or.valid.ts)[2],  accuracy(or.west.poly.season.trend.pred$mean, or.valid.ts)[2], accuracy(or.west.tbats.pred$mean, or.valid.ts)[2]),
+  MAPE = c(accuracy(or.west_snaive_pred$mean, or.valid.ts)[5], accuracy(or.west.auto.arima.pred$mean, or.valid.ts)[5], accuracy(hwin.or.pred$mean, or.valid.ts)[5], accuracy(or.ets.aan.pred$mean, or.valid.ts)[5], accuracy(or.ets.mam.pred$mean, or.valid.ts)[5], accuracy(or.ets.maa.pred$mean, or.valid.ts)[5], accuracy(or.west.lm.season.trend.pred$mean, or.valid.ts)[5],  accuracy(or.west.poly.season.trend.pred$mean, or.valid.ts)[5], accuracy(or.west.tbats.pred$mean, or.valid.ts)[5])
+)
+
+acc_df
+
+saveRDS(acc_df, "/Users/zhuguanyu/Desktop/WestCoeast_DF.rds")
+```
+
+Creat a plot
+```{r}
+plot(or.west_snaive_pred, include=24, level=0, ylim = c(2, 5))
+lines(or.west.auto.arima.pred$mean, col='green', lwd=2)
+lines(best.ets.mam.pred$mean, col ='purple', lwd=2)
+lines(or.valid.ts, lwd=2)
+```
+Finally, applying ets("MAM") to all the time series combining train and validation time periods
+```{r}
+full.or.ets.mam <- ets(original_WestCoast.ts, model = 'MAM')
+full.or.ets.mam.pred <- forecast(full.or.ets.mam, h= 12, level = 0)
+plot(full.or.ets.mam.pred, include = 48)
+full.or.ets.mam.pred$mean
+
+# Half an Year (2022 Jan ~ 2022 Jun) Percent Change: 15.6% higher 
+(3.911-3.385)/ 3.385 
+
+# One Year (2022 Jan ~ 2022 Dec) Percent Change: 2.2% higher
+(3.46-3.385)/ 3.385
+
+
+# lowest price happens on February, highest on Jun
+```
+
+```{r}
+# Define ranges of alpha, beta, and gamma
+alpha_range <- seq(0.1, .9, by = 0.05)
+beta_range <- seq(0.0001, .1, by = 0.005)
+gamma_range <- seq(0.0001, .1, by = 0.005)
+
+# Create an empty matrix to store MAE values
+mae_matrix <- matrix(NA, nrow = length(alpha_range), ncol = length(beta_range) * length(gamma_range))
+
+# Loop through combinations of alpha, beta, and gamma
+for (i in seq_along(alpha_range)) {
+  for (j in seq_along(beta_range)) {
+    for (k in seq_along(gamma_range)) {
+      # Fit model and make forecast for each combination of parameters
+      grid.ets.mam <- ets(or.train.ts, model = 'MAM', alpha = alpha_range[i], beta = beta_range[j], gamma = gamma_range[k])
+      grid.ets.mam.pred <- forecast(grid.ets.mam, h = nValid, level = 0)
+     
+      # Calculate MAE and store it in the matrix
+      mae_matrix[i, (j-1)*length(gamma_range)+k] <- mean(abs(grid.ets.mam.pred$mean - or.valid.ts))
+    }
+  }
+}
+
+# Find the indices of the minimum MAE value in the matrix
+min_indices <- which(mae_matrix == min(mae_matrix), arr.ind = TRUE)
+
+# Extract the corresponding alpha, beta, and gamma values
+best_alpha <- alpha_range[min_indices[1, 1]]
+best_beta <- beta_range[(min_indices[1, 2] - 1) %/% length(gamma_range) + 1]
+best_gamma <- gamma_range[(min_indices[1, 2] - 1) %% length(gamma_range) + 1]
+```
+
+```{r}
+best.ets.mam <- ets(or.train.ts, model = 'MAM', alpha = 0.3, beta = 0.0801, gamma = 0.0751)
+best.ets.mam.pred <- forecast(best.ets.mam, h=nValid, level=0)
+accuracy(best.ets.mam.pred$mean, or.valid.ts)
+```
+
+
+
